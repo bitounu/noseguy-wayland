@@ -7,9 +7,12 @@ cairo_dep      = dependency('cairo')
 pangocairo_dep = dependency('pangocairo')
 threads_dep    = dependency('threads')
 
-wayland_scanner = find_program('wayland-scanner')
+wayland_scanner   = find_program('wayland-scanner')
+wayland_protocols = dependency('wayland-protocols')
+wp_dir            = wayland_protocols.get_variable('pkgdatadir')
 
 layer_shell_xml = files('protocol/wlr-layer-shell-unstable-v1.xml')
+xdg_shell_xml   = wp_dir / 'stable/xdg-shell/xdg-shell.xml'
 
 layer_shell_h = custom_target('layer-shell-header',
   input  : layer_shell_xml,
@@ -21,8 +24,13 @@ layer_shell_c = custom_target('layer-shell-code',
   output : 'wlr-layer-shell-unstable-v1-protocol.c',
   command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'])
 
+xdg_shell_c = custom_target('xdg-shell-code',
+  input  : xdg_shell_xml,
+  output : 'xdg-shell-protocol.c',
+  command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'])
+
 inc     = include_directories('src', 'data')
-gen     = [layer_shell_h, layer_shell_c]
+gen     = [layer_shell_h, layer_shell_c, xdg_shell_c]
 
 src_core = files('src/anim.c', 'src/text.c')
 src_all  = src_core + files('src/render.c', 'src/wayland.c', 'src/main.c')
