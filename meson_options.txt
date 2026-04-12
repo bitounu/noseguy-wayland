@@ -1,0 +1,2 @@
+option('plugin', type : 'boolean', value : false,
+  description : 'Build swaylock-plugin shared library')
