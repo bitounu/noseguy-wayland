@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stddef.h>
+
 /* Built-in messages from the original noseguy (Dan Heller / Jamie Zawinski).
  * TODO: replace with verbatim list from xscreensaver/hacks/noseguy.c
  * Array is NULL-terminated. */
