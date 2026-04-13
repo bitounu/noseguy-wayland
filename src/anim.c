@@ -6,7 +6,8 @@
 #include <time.h>
 
 /* Timing constants tuned to match original noseguy feel */
-#define WALK_SPEED_PX   4.0   /* pixels per tick                    */
+#define WALK_SPEED_PX   4.0   /* pixels per tick, horizontal        */
+#define WALK_VERT_SPEED 2.0   /* pixels per tick, vertical max      */
 #define WALK_DUR_MIN    2.0   /* seconds                            */
 #define WALK_DUR_MAX    8.0
 #define STOP_DUR        0.3
@@ -27,6 +28,7 @@ void anim_init(AnimState *s, int width, int height) {
     srand((unsigned)time(NULL));
     s->width       = width;
     s->height      = height;
+    s->reading_cps = 15.0;   /* default; caller may override after init */
     s->y           = height * 0.85;
     s->x           = randf(width * 0.3, width * 0.7);
     s->dir         = (rand() % 2) ? DIR_RIGHT : DIR_LEFT;
@@ -41,6 +43,7 @@ static void enter_state(AnimState *s, AnimStateKind next) {
     case STATE_WALK:
         s->state_timer = randf(WALK_DUR_MIN, WALK_DUR_MAX);
         s->dir         = (rand() % 2) ? DIR_RIGHT : DIR_LEFT;
+        s->vy          = randf(-WALK_VERT_SPEED, WALK_VERT_SPEED);
         break;
     case STATE_STOP:
         s->state_timer = STOP_DUR;
@@ -74,18 +77,25 @@ void anim_tick(AnimState *s, double dt) {
     }
 
     switch (s->state) {
-    case STATE_WALK:
+    case STATE_WALK: {
         s->x    += s->dir * WALK_SPEED_PX;
+        s->y    += s->vy;
         s->frame = (int)(fabs(s->x) / (WALK_SPEED_PX * 4)) % 4;
         if (s->x <= MARGIN) {
-            s->x  = MARGIN;
+            s->x   = MARGIN;
             s->dir = DIR_RIGHT;
         } else if (s->x >= s->width - MARGIN) {
-            s->x  = s->width - MARGIN;
+            s->x   = s->width - MARGIN;
             s->dir = DIR_LEFT;
         }
+        /* head top ≈ y - 13 u, u = height*0.013; keep head inside */
+        double y_min = s->height * 0.17 + MARGIN;
+        double y_max = (double)s->height - MARGIN;
+        if (s->y < y_min) { s->y = y_min; s->vy =  fabs(s->vy); }
+        if (s->y > y_max) { s->y = y_max; s->vy = -fabs(s->vy); }
         if (s->state_timer <= 0.0) enter_state(s, STATE_STOP);
         break;
+    }
 
     case STATE_STOP:
         if (s->state_timer <= 0.0) enter_state(s, STATE_TALK);
@@ -113,4 +123,10 @@ bool anim_wants_text(const AnimState *s) {
 void anim_set_text(AnimState *s, char *text) {
     free(s->current_text);
     s->current_text = text;
+    /* Recalculate TALK duration based on reading speed, 3–30 s range */
+    double cps = (s->reading_cps > 0.0) ? s->reading_cps : 15.0;
+    double t = text ? (double)strlen(text) / cps : 3.0;
+    if (t < 3.0)  t = 3.0;
+    if (t > 30.0) t = 30.0;
+    s->state_timer = t;
 }

@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <linux/input-event-codes.h>
 
 /* ── SHM buffers ─────────────────────────────────────────────────── */
 
@@ -60,10 +61,29 @@ static void output_free_buffers(Output *out) {
 
 static const struct wl_callback_listener frame_listener;
 
-static void schedule_frame(Output *out) {
+/* Render into the back buffer, attach it, damage the surface, then
+ * request the next frame callback and commit.  Every commit has a
+ * buffer attached, which is required for the compositor to fire the
+ * frame callback. */
+static void render_and_commit(Output *out) {
+    int idx = out->buf_idx ^ 1;
+
+    cairo_t *cr = cairo_create(out->cs[idx]);
+    render_frame(cr, out->width, out->height, &out->anim,
+                 out->app->font_name, out->app->font_size,
+                 out->app->bg_r, out->app->bg_g, out->app->bg_b,
+                 &out->app->bubble, out->app->sprites);
+    cairo_destroy(cr);
+    cairo_surface_flush(out->cs[idx]);
+
+    wl_surface_attach(out->surface, out->bufs[idx], 0, 0);
+    wl_surface_damage_buffer(out->surface, 0, 0, out->width, out->height);
+
     struct wl_callback *cb = wl_surface_frame(out->surface);
     wl_callback_add_listener(cb, &frame_listener, out);
+
     wl_surface_commit(out->surface);
+    out->buf_idx = idx;
 }
 
 static void frame_done(void *data, struct wl_callback *cb, uint32_t ms) {
@@ -72,27 +92,14 @@ static void frame_done(void *data, struct wl_callback *cb, uint32_t ms) {
     wl_callback_destroy(cb);
     if (!out->configured || !out->app->running) return;
 
-    double dt = 1.0 / out->app->fps;
-
-    anim_tick(&out->anim, dt);
+    anim_tick(&out->anim, 1.0 / out->app->fps);
 
     if (anim_wants_text(&out->anim)) {
         const char *t = text_get_next(out->app->text);
         anim_set_text(&out->anim, t ? strdup(t) : strdup("..."));
     }
 
-    int idx = out->buf_idx ^ 1;
-    cairo_t *cr = cairo_create(out->cs[idx]);
-    render_frame(cr, out->width, out->height, &out->anim,
-                 out->app->font_name, out->app->font_size,
-                 out->app->bg_r, out->app->bg_g, out->app->bg_b);
-    cairo_destroy(cr);
-    cairo_surface_flush(out->cs[idx]);
-
-    wl_surface_attach(out->surface, out->bufs[idx], 0, 0);
-    wl_surface_damage_buffer(out->surface, 0, 0, out->width, out->height);
-    schedule_frame(out);
-    out->buf_idx = idx;
+    render_and_commit(out);
 }
 
 static const struct wl_callback_listener frame_listener = { frame_done };
@@ -112,10 +119,12 @@ static void layer_surface_configure(void *data,
         out->height = (int)h;
         output_alloc_buffers(out);
         anim_init(&out->anim, out->width, out->height);
+        int wpm = out->app->reading_wpm > 0 ? out->app->reading_wpm : 200;
+        out->anim.reading_cps = wpm * 5.0 / 60.0;  /* avg 5 chars/word */
     }
     if (!out->configured) {
         out->configured = true;
-        schedule_frame(out);
+        render_and_commit(out);
     }
 }
 
@@ -141,7 +150,7 @@ static void output_create(App *app, struct wl_output *wl_out) {
     out->surface = wl_compositor_create_surface(app->compositor);
     out->layer_surface = zwlr_layer_shell_v1_get_layer_surface(
         app->layer_shell, out->surface, wl_out,
-        ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND, "noseguy");
+        ZWLR_LAYER_SHELL_V1_LAYER_TOP, "noseguy");
 
     /* Anchor to all edges + size 0,0 → compositor fills the full output */
     zwlr_layer_surface_v1_set_anchor(out->layer_surface,
@@ -151,6 +160,8 @@ static void output_create(App *app, struct wl_output *wl_out) {
         ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT);
     zwlr_layer_surface_v1_set_size(out->layer_surface, 0, 0);
     zwlr_layer_surface_v1_set_exclusive_zone(out->layer_surface, -1);
+    zwlr_layer_surface_v1_set_keyboard_interactivity(out->layer_surface,
+        ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_EXCLUSIVE);
     zwlr_layer_surface_v1_add_listener(out->layer_surface,
                                         &layer_surface_listener, out);
     wl_surface_commit(out->surface);
@@ -158,6 +169,59 @@ static void output_create(App *app, struct wl_output *wl_out) {
     out->next    = app->outputs;
     app->outputs = out;
 }
+
+/* ── Keyboard input ───────────────────────────────────────────────── */
+
+static void kbd_keymap(void *d, struct wl_keyboard *k,
+    uint32_t fmt, int32_t fd, uint32_t sz)
+    { (void)d; (void)k; (void)fmt; (void)sz; close(fd); }
+
+static void kbd_enter(void *d, struct wl_keyboard *k,
+    uint32_t s, struct wl_surface *surf, struct wl_array *a)
+    { (void)d; (void)k; (void)s; (void)surf; (void)a; }
+
+static void kbd_leave(void *d, struct wl_keyboard *k,
+    uint32_t s, struct wl_surface *surf)
+    { (void)d; (void)k; (void)s; (void)surf; }
+
+static void kbd_key(void *data, struct wl_keyboard *k,
+    uint32_t serial, uint32_t time, uint32_t key, uint32_t state)
+{
+    (void)k; (void)serial; (void)time;
+    if (key == KEY_ESC && state == WL_KEYBOARD_KEY_STATE_PRESSED)
+        ((App *)data)->running = false;
+}
+
+static void kbd_modifiers(void *d, struct wl_keyboard *k,
+    uint32_t s, uint32_t md, uint32_t ml, uint32_t mk, uint32_t g)
+    { (void)d; (void)k; (void)s; (void)md; (void)ml; (void)mk; (void)g; }
+
+static void kbd_repeat_info(void *d, struct wl_keyboard *k,
+    int32_t rate, int32_t delay)
+    { (void)d; (void)k; (void)rate; (void)delay; }
+
+static const struct wl_keyboard_listener kbd_listener = {
+    .keymap      = kbd_keymap,
+    .enter       = kbd_enter,
+    .leave       = kbd_leave,
+    .key         = kbd_key,
+    .modifiers   = kbd_modifiers,
+    .repeat_info = kbd_repeat_info,
+};
+
+static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
+    App *app = data;
+    if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !app->keyboard) {
+        app->keyboard = wl_seat_get_keyboard(seat);
+        wl_keyboard_add_listener(app->keyboard, &kbd_listener, app);
+    }
+}
+
+static void seat_name(void *d, struct wl_seat *s, const char *n)
+    { (void)d; (void)s; (void)n; }
+
+static const struct wl_seat_listener seat_listener =
+    { seat_capabilities, seat_name };
 
 /* ── Registry ─────────────────────────────────────────────────────── */
 
@@ -172,7 +236,10 @@ static void registry_global(void *data, struct wl_registry *reg,
         app->shm         = wl_registry_bind(reg, name, &wl_shm_interface,          1);
     else if (!strcmp(iface, zwlr_layer_shell_v1_interface.name))
         app->layer_shell = wl_registry_bind(reg, name, &zwlr_layer_shell_v1_interface, 1);
-    else if (!strcmp(iface, wl_output_interface.name)) {
+    else if (!strcmp(iface, wl_seat_interface.name)) {
+        app->seat = wl_registry_bind(reg, name, &wl_seat_interface, 4);
+        wl_seat_add_listener(app->seat, &seat_listener, app);
+    } else if (!strcmp(iface, wl_output_interface.name)) {
         struct wl_output *wo = wl_registry_bind(reg, name, &wl_output_interface,  2);
         output_create(app, wo);
     }
@@ -185,6 +252,42 @@ static const struct wl_registry_listener registry_listener =
     { registry_global, registry_remove };
 
 /* ── Public API ───────────────────────────────────────────────────── */
+
+/* Sprite file names in SPR_* order */
+static const char *sprite_files[SPR_COUNT] = {
+    "nose-f1.png", "nose-f2.png", "nose-f3.png", "nose-f4.png",
+    "nose-l1.png", "nose-l2.png", "nose-r1.png", "nose-r2.png",
+};
+
+void wayland_load_sprites(App *app, const char *dir) {
+    if (!dir) return;
+    char path[4096];
+    for (int i = 0; i < SPR_COUNT; i++) {
+        snprintf(path, sizeof(path), "%s/%s", dir, sprite_files[i]);
+        app->sprites[i] = cairo_image_surface_create_from_png(path);
+        if (cairo_surface_status(app->sprites[i]) != CAIRO_STATUS_SUCCESS) {
+            fprintf(stderr, "Warning: cannot load sprite %s: %s\n",
+                    path,
+                    cairo_status_to_string(
+                        cairo_surface_status(app->sprites[i])));
+            cairo_surface_destroy(app->sprites[i]);
+            app->sprites[i] = NULL;
+        }
+    }
+    /* If any sprite failed, disable sprites entirely (use vector fallback) */
+    for (int i = 0; i < SPR_COUNT; i++) {
+        if (!app->sprites[i]) {
+            for (int j = 0; j < SPR_COUNT; j++) {
+                if (app->sprites[j]) {
+                    cairo_surface_destroy(app->sprites[j]);
+                    app->sprites[j] = NULL;
+                }
+            }
+            fprintf(stderr, "Sprites incomplete — using vector character.\n");
+            return;
+        }
+    }
+}
 
 bool wayland_init(App *app) {
     app->display = wl_display_connect(NULL);
@@ -219,6 +322,10 @@ void wayland_destroy(App *app) {
         free(o);
         o = next;
     }
+    for (int i = 0; i < SPR_COUNT; i++)
+        if (app->sprites[i]) { cairo_surface_destroy(app->sprites[i]); app->sprites[i] = NULL; }
+    if (app->keyboard)    wl_keyboard_destroy(app->keyboard);
+    if (app->seat)        wl_seat_destroy(app->seat);
     if (app->layer_shell) zwlr_layer_shell_v1_destroy(app->layer_shell);
     if (app->shm)         wl_shm_destroy(app->shm);
     if (app->compositor)  wl_compositor_destroy(app->compositor);
