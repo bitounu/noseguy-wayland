@@ -55,9 +55,10 @@ test('text provider', test_text_exe)
 
 # Optional plugin target
 if get_option('plugin')
+  m_dep = meson.get_compiler('c').find_library('m')
   shared_library('noseguy-plugin',
     src_core + files('src/render.c', 'src/plugin.c'),
-    dependencies        : [cairo_dep, pangocairo_dep, threads_dep],
+    dependencies        : [cairo_dep, pangocairo_dep, threads_dep, m_dep],
     include_directories : inc,
     install             : true)
 endif
