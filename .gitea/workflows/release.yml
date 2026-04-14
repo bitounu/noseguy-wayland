@@ -8,18 +8,16 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm \
-            wayland wayland-protocols \
-            cairo pango \
-            meson ninja gcc pkg-config
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libwayland-dev wayland-protocols \
+            libcairo2-dev libpango1.0-dev \
+            meson ninja-build gcc pkg-config
 
       - name: Configure
         run: meson setup build
@@ -30,18 +28,16 @@ jobs:
   build:
     needs: test
     runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
         run: |
-          pacman -Syu --noconfirm
-          pacman -S --noconfirm \
-            wayland wayland-protocols \
-            cairo pango \
-            meson ninja gcc pkg-config
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libwayland-dev wayland-protocols \
+            libcairo2-dev libpango1.0-dev \
+            meson ninja-build gcc pkg-config
 
       - name: Build (app + plugin)
         run: |
