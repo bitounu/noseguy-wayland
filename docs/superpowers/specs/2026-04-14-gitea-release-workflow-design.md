@@ -80,7 +80,9 @@ noseguy-v0.1.0-x86_64.tar.gz
 
 ## INSTALL.md
 
-A new file to be created at the repo root and included in every release tarball. Contents:
+A static file committed once to the repo root. The workflow copies it into the tarball at release time — it is not generated dynamically.
+
+Contents:
 
 - How to extract the tarball
 - How to install the binary (`noseguy-wayland`) and sprites
