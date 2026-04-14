@@ -6,6 +6,7 @@ wayland_client = dependency('wayland-client')
 cairo_dep      = dependency('cairo')
 pangocairo_dep = dependency('pangocairo')
 threads_dep    = dependency('threads')
+m_dep          = meson.get_compiler('c').find_library('m')
 
 wayland_scanner   = find_program('wayland-scanner')
 wayland_protocols = dependency('wayland-protocols')
@@ -37,7 +38,7 @@ src_all  = src_core + files('src/render.c', 'src/wayland.c', 'src/main.c')
 
 executable('noseguy-wayland',
   src_all + gen,
-  dependencies        : [wayland_client, cairo_dep, pangocairo_dep, threads_dep],
+  dependencies        : [wayland_client, cairo_dep, pangocairo_dep, threads_dep, m_dep],
   include_directories : inc,
   install             : true)
 
@@ -55,7 +56,6 @@ test('text provider', test_text_exe)
 
 # Optional plugin target
 if get_option('plugin')
-  m_dep = meson.get_compiler('c').find_library('m')
   shared_library('noseguy-plugin',
     src_core + files('src/render.c', 'src/plugin.c'),
     dependencies        : [cairo_dep, pangocairo_dep, threads_dep, m_dep],
