@@ -44,6 +44,7 @@ struct App {
     struct zwlr_layer_shell_v1   *layer_shell;
     struct wl_seat               *seat;
     struct wl_keyboard           *keyboard;
+    struct wl_pointer            *pointer;
 
     Output                       *outputs;
     TextProvider                 *text;
@@ -59,6 +60,7 @@ struct App {
     cairo_surface_t              *sprites[SPR_COUNT];
 
     bool                          running;
+    bool                          idle_mode;  /* --idle-mode: ignore Esc, exit only on SIGTERM */
 };
 
 bool wayland_init(App *app);

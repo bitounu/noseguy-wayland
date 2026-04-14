@@ -23,7 +23,8 @@ static void usage(const char *prog) {
         "  --sprites-dir <path>       directory containing nose-*.png sprites\n"
         "  --bubble-color <#rrggbbaa> bubble fill color + alpha (default: #ffffffee)\n"
         "  --bubble-border-color <#rrggbbaa>  border color + alpha (default: #2e2e2ed9)\n"
-        "  --bubble-border-width <px> border line width (default: 1.5)\n",
+        "  --bubble-border-width <px> border line width (default: 1.5)\n"
+        "  --idle-mode                ignore Esc; exit only on SIGTERM (for swayidle)\n",
         prog);
 }
 
@@ -76,6 +77,7 @@ int main(int argc, char **argv) {
         { "bubble-border-color", required_argument, NULL, 'D' },
         { "bubble-border-width", required_argument, NULL, 'W' },
         { "reading-wpm",         required_argument, NULL, 'R' },
+        { "idle-mode",           no_argument,       NULL, 'I' },
         { "help",                no_argument,       NULL, 'h' },
         { NULL, 0, NULL, 0 }
     };
@@ -93,6 +95,7 @@ int main(int argc, char **argv) {
         case 'S': sprites_dir   = optarg;                        break;
         case 'W': app.bubble.border_width = atof(optarg);        break;
         case 'R': app.reading_wpm = atoi(optarg);                break;
+        case 'I': app.idle_mode   = true;                        break;
         case 'b':
             if (!parse_rgb(optarg, &app.bg_r, &app.bg_g, &app.bg_b)) {
                 fprintf(stderr, "Invalid color: %s\n", optarg); return 1;

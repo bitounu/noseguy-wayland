@@ -12,7 +12,15 @@
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
+#include <signal.h>
 #include <linux/input-event-codes.h>
+
+static volatile bool *g_running = NULL;
+
+static void sigterm_handler(int sig) {
+    (void)sig;
+    if (g_running) *g_running = false;
+}
 
 /* ── SHM buffers ─────────────────────────────────────────────────── */
 
@@ -188,8 +196,12 @@ static void kbd_key(void *data, struct wl_keyboard *k,
     uint32_t serial, uint32_t time, uint32_t key, uint32_t state)
 {
     (void)k; (void)serial; (void)time;
-    if (key == KEY_ESC && state == WL_KEYBOARD_KEY_STATE_PRESSED)
-        ((App *)data)->running = false;
+    App *app = data;
+    if (state != WL_KEYBOARD_KEY_STATE_PRESSED) return;
+    /* idle-mode: any key dismisses (Esc not special — avoids accidental close on resume) */
+    /* normal mode: only Esc quits */
+    if (app->idle_mode || key == KEY_ESC)
+        app->running = false;
 }
 
 static void kbd_modifiers(void *d, struct wl_keyboard *k,
@@ -209,11 +221,54 @@ static const struct wl_keyboard_listener kbd_listener = {
     .repeat_info = kbd_repeat_info,
 };
 
+/* ── Pointer input ────────────────────────────────────────────────── */
+
+static void ptr_enter(void *d, struct wl_pointer *p,
+    uint32_t s, struct wl_surface *surf, wl_fixed_t x, wl_fixed_t y)
+    { (void)d; (void)p; (void)s; (void)surf; (void)x; (void)y; }
+
+static void ptr_leave(void *d, struct wl_pointer *p,
+    uint32_t s, struct wl_surface *surf)
+    { (void)d; (void)p; (void)s; (void)surf; }
+
+static void ptr_motion(void *data, struct wl_pointer *p,
+    uint32_t time, wl_fixed_t x, wl_fixed_t y)
+{
+    (void)p; (void)time; (void)x; (void)y;
+    App *app = data;
+    if (app->idle_mode) app->running = false;
+}
+
+static void ptr_button(void *data, struct wl_pointer *p,
+    uint32_t serial, uint32_t time, uint32_t button, uint32_t state)
+{
+    (void)p; (void)serial; (void)time; (void)button;
+    App *app = data;
+    if (app->idle_mode && state == WL_POINTER_BUTTON_STATE_PRESSED)
+        app->running = false;
+}
+
+static void ptr_axis(void *d, struct wl_pointer *p,
+    uint32_t t, uint32_t axis, wl_fixed_t v)
+    { (void)d; (void)p; (void)t; (void)axis; (void)v; }
+
+static const struct wl_pointer_listener ptr_listener = {
+    .enter  = ptr_enter,
+    .leave  = ptr_leave,
+    .motion = ptr_motion,
+    .button = ptr_button,
+    .axis   = ptr_axis,
+};
+
 static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
     App *app = data;
     if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !app->keyboard) {
         app->keyboard = wl_seat_get_keyboard(seat);
         wl_keyboard_add_listener(app->keyboard, &kbd_listener, app);
+    }
+    if ((caps & WL_SEAT_CAPABILITY_POINTER) && !app->pointer) {
+        app->pointer = wl_seat_get_pointer(seat);
+        wl_pointer_add_listener(app->pointer, &ptr_listener, app);
     }
 }
 
@@ -308,8 +363,11 @@ bool wayland_init(App *app) {
 
 void wayland_run(App *app) {
     app->running = true;
+    g_running = &app->running;
+    signal(SIGTERM, sigterm_handler);
     while (app->running && wl_display_dispatch(app->display) != -1)
         ;
+    g_running = NULL;
 }
 
 void wayland_destroy(App *app) {
@@ -324,6 +382,7 @@ void wayland_destroy(App *app) {
     }
     for (int i = 0; i < SPR_COUNT; i++)
         if (app->sprites[i]) { cairo_surface_destroy(app->sprites[i]); app->sprites[i] = NULL; }
+    if (app->pointer)     wl_pointer_destroy(app->pointer);
     if (app->keyboard)    wl_keyboard_destroy(app->keyboard);
     if (app->seat)        wl_seat_destroy(app->seat);
     if (app->layer_shell) zwlr_layer_shell_v1_destroy(app->layer_shell);

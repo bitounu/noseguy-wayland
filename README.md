@@ -94,7 +94,7 @@ noseguy-wayland \
   --font-color '#1a1a1a'
 ```
 
-Press **Escape** to quit.
+Press **Escape** to quit. Use `--idle-mode` when launching from swayidle (see below).
 
 ---
 
@@ -113,11 +113,11 @@ Add to your Sway config (`~/.config/sway/config`):
 
 ```
 exec swayidle -w \
-  timeout 300 'noseguy-wayland --sprites-dir ~/.local/share/noseguy --text-command "fortune -s"' \
-       resume 'pkill noseguy-wayland' \
+  timeout 300 'noseguy-wayland --idle-mode --sprites-dir ~/.local/share/noseguy --text-command "fortune -s"' \
+       resume 'pkill -TERM noseguy-wayland' \
   timeout 600 'swaymsg "output * dpms off"' \
        resume 'swaymsg "output * dpms on"' \
-  before-sleep 'pkill noseguy-wayland'
+  before-sleep 'pkill -TERM noseguy-wayland'
 ```
 
 Timings:
@@ -135,12 +135,24 @@ swaymsg reload
 
 ```
 exec swayidle -w \
-  timeout 300  'noseguy-wayland --sprites-dir ~/.local/share/noseguy --text-command "fortune -s"' \
-       resume  'pkill noseguy-wayland' \
-  timeout 360  'pkill noseguy-wayland; swaylock --screenshots --effect-blur 7x5' \
+  timeout 600 'swaylock-plugin --command '\''noseguy-wayland --idle-mode \
+              --sprites-dir ~/.local/share/noseguy \
+              --reading-wpm 30 \
+              --interval 5 --font-size 20 \
+              --text-command "fortune -s"'\''' \
+  resume 'pkill -TERM noseguy-wayland'
+```
+
+or
+
+```
+exec swayidle -w \
+  timeout 300  'noseguy-wayland --idle-mode --sprites-dir ~/.local/share/noseguy --text-command "fortune -s"' \
+       resume  'pkill -TERM noseguy-wayland' \
+  timeout 360  'pkill -TERM noseguy-wayland; swaylock --screenshots --effect-blur 7x5' \
   timeout 600  'swaymsg "output * dpms off"' \
        resume  'swaymsg "output * dpms on"' \
-  before-sleep 'pkill noseguy-wayland; swaylock --screenshots --effect-blur 7x5'
+  before-sleep 'pkill -TERM noseguy-wayland; swaylock --screenshots --effect-blur 7x5'
 ```
 
 > **Note:** swaylock-effects is required for `--screenshots --effect-blur`.  
@@ -184,8 +196,8 @@ lock screen appears, giving the user a visible idle indicator:
 
 ```
 exec swayidle -w \
-  timeout 300  'noseguy-wayland --sprites-dir ~/.local/share/noseguy --text-command "fortune -s"' \
-       resume  'pkill noseguy-wayland' \
+  timeout 300  'noseguy-wayland --idle-mode --sprites-dir ~/.local/share/noseguy --text-command "fortune -s"' \
+       resume  'pkill -TERM noseguy-wayland' \
   timeout 360  'pkill -TERM noseguy-wayland; swaylock -f' \
   timeout 600  'swaymsg "output * dpms off"' \
        resume  'swaymsg "output * dpms on"' \
@@ -334,5 +346,7 @@ dlclose(lib);
 | `--bubble-color <#rrggbbaa>`  | `#ffffffee`  | Bubble fill color (supports alpha)     |
 | `--bubble-border-color <…>`   | `#2e2e2ed9`  | Bubble border color (supports alpha)   |
 | `--bubble-border-width <px>`  | `1.5`        | Bubble border line width               |
+| `--idle-mode`                 |              | Ignore Esc; exit only on SIGTERM       |
 
-Press **Escape** to quit when running interactively.
+Press **Escape** to quit when running interactively.  
+In `--idle-mode` Esc is disabled — terminate with `pkill -TERM noseguy-wayland`.
