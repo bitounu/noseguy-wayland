@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm \
+            wayland wayland-protocols \
+            cairo pango \
+            meson ninja gcc pkg-config
+
+      - name: Configure
+        run: meson setup build
+
+      - name: Run tests
+        run: meson test -C build --print-errorlogs
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm \
+            wayland wayland-protocols \
+            cairo pango \
+            meson ninja gcc pkg-config
+
+      - name: Build (app + plugin)
+        run: |
+          meson setup build -Dplugin=true
+          ninja -C build
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: |
+            build/noseguy-wayland
+            build/libnoseguy-plugin.so
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: artifacts/
+
+      - name: Set version
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+
+      - name: Assemble tarball
+        run: |
+          STAGING="noseguy-${VERSION}-x86_64"
+          mkdir -p "${STAGING}/noseguy-images"
+          cp artifacts/noseguy-wayland        "${STAGING}/"
+          cp artifacts/libnoseguy-plugin.so   "${STAGING}/"
+          cp noseguy-images/*.png             "${STAGING}/noseguy-images/"
+          cp INSTALL.md                       "${STAGING}/"
+          chmod +x "${STAGING}/noseguy-wayland"
+          tar -czf "noseguy-${VERSION}-x86_64.tar.gz" "${STAGING}"
+
+      - name: Create Gitea release
+        id: create_release
+        run: |
+          RELEASE_ID=$(curl -s -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            "${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}/releases" \
+            -d "{\"tag_name\":\"${VERSION}\",\"name\":\"${VERSION}\"}" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release asset
+        run: |
+          ASSET="noseguy-${VERSION}-x86_64.tar.gz"
+          curl -s -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/octet-stream" \
+            "${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}/releases/${{ steps.create_release.outputs.release_id }}/assets?name=${ASSET}" \
+            --data-binary @"${ASSET}"
