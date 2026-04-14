@@ -9,7 +9,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          GITEA_HOST=$(echo "$GITHUB_SERVER_URL" | sed 's|https\?://||; s|/$||')
+          git clone --depth=1 --branch "$GITHUB_REF_NAME" \
+            "https://oauth2:${TOKEN}@${GITEA_HOST}/${GITHUB_REPOSITORY}.git" .
 
       - name: Install dependencies
         run: |
@@ -29,7 +35,13 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          GITEA_HOST=$(echo "$GITHUB_SERVER_URL" | sed 's|https\?://||; s|/$||')
+          git clone --depth=1 --branch "$GITHUB_REF_NAME" \
+            "https://oauth2:${TOKEN}@${GITEA_HOST}/${GITHUB_REPOSITORY}.git" .
 
       - name: Install dependencies
         run: |
@@ -56,7 +68,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          GITEA_HOST=$(echo "$GITHUB_SERVER_URL" | sed 's|https\?://||; s|/$||')
+          git clone --depth=1 --branch "$GITHUB_REF_NAME" \
+            "https://oauth2:${TOKEN}@${GITEA_HOST}/${GITHUB_REPOSITORY}.git" .
 
       - name: Download binaries
         uses: actions/download-artifact@v4
