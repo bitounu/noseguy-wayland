@@ -98,20 +98,27 @@ jobs:
 
       - name: Create Gitea release
         id: create_release
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RELEASE_ID=$(curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          GITEA_HOST=$(echo "$GITHUB_SERVER_URL" | sed 's|https\?://||; s|/$||')
+          RESPONSE=$(curl -sL -X POST \
+            -H "Authorization: token ${TOKEN}" \
             -H "Content-Type: application/json" \
-            "${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}/releases" \
-            -d "{\"tag_name\":\"${VERSION}\",\"name\":\"${VERSION}\"}" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+            "https://${GITEA_HOST}/api/v1/repos/${GITHUB_REPOSITORY}/releases" \
+            -d "{\"tag_name\":\"${VERSION}\",\"name\":\"${VERSION}\"}")
+          echo "API response: ${RESPONSE}"
+          RELEASE_ID=$(echo "${RESPONSE}" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
           echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Upload release asset
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          GITEA_HOST=$(echo "$GITHUB_SERVER_URL" | sed 's|https\?://||; s|/$||')
           ASSET="noseguy-${VERSION}-x86_64.tar.gz"
-          curl -s -X POST \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          curl -sL -X POST \
+            -H "Authorization: token ${TOKEN}" \
             -H "Content-Type: application/octet-stream" \
-            "${GITHUB_SERVER_URL}/api/v1/repos/${GITHUB_REPOSITORY}/releases/${{ steps.create_release.outputs.release_id }}/assets?name=${ASSET}" \
+            "https://${GITEA_HOST}/api/v1/repos/${GITHUB_REPOSITORY}/releases/${{ steps.create_release.outputs.release_id }}/assets?name=${ASSET}" \
             --data-binary @"${ASSET}"
