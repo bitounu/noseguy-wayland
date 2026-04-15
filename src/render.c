@@ -293,7 +293,7 @@ void render_frame(cairo_t *cr, int width, int height,
     cairo_set_source_rgb(cr, bg_r, bg_g, bg_b);
     cairo_paint(cr);
 
-    if (sprites)
+    if (sprites && sprites[0])
         draw_sprite_char(cr, a->x, a->y, char_height, sprites, a);
     else
         draw_vector_char(cr, a->x, a->y, u, a);
