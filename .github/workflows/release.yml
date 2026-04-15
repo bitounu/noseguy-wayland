@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          GITEA_HOST=$(echo "$GITHUB_SERVER_URL" | sed 's|https\?://||; s|/$||')
+          git clone --depth=1 --branch "$GITHUB_REF_NAME" \
+            "https://oauth2:${TOKEN}@${GITEA_HOST}/${GITHUB_REPOSITORY}.git" .
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libwayland-dev wayland-protocols \
+            libcairo2-dev libpango1.0-dev \
+            meson ninja-build gcc pkg-config
+
+      - name: Configure
+        run: meson setup build
+
+      - name: Run tests
+        run: meson test -C build --print-errorlogs
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          GITEA_HOST=$(echo "$GITHUB_SERVER_URL" | sed 's|https\?://||; s|/$||')
+          git clone --depth=1 --branch "$GITHUB_REF_NAME" \
+            "https://oauth2:${TOKEN}@${GITEA_HOST}/${GITHUB_REPOSITORY}.git" .
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y \
+            libwayland-dev wayland-protocols \
+            libcairo2-dev libpango1.0-dev \
+            meson ninja-build gcc pkg-config
+
+      - name: Build (app + plugin)
+        run: |
+          meson setup build -Dplugin=true
+          ninja -C build
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v3
+        with:
+          name: binaries
+          path: |
+            build/noseguy-wayland
+            build/libnoseguy-plugin.so
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          GITEA_HOST=$(echo "$GITHUB_SERVER_URL" | sed 's|https\?://||; s|/$||')
+          git clone --depth=1 --branch "$GITHUB_REF_NAME" \
+            "https://oauth2:${TOKEN}@${GITEA_HOST}/${GITHUB_REPOSITORY}.git" .
+
+      - name: Download binaries
+        uses: actions/download-artifact@v3
+        with:
+          name: binaries
+          path: artifacts/
+
+      - name: Set version
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
+
+      - name: Assemble tarball
+        run: |
+          STAGING="noseguy-${VERSION}-x86_64"
+          mkdir -p "${STAGING}/noseguy-images"
+          cp artifacts/noseguy-wayland        "${STAGING}/"
+          cp artifacts/libnoseguy-plugin.so   "${STAGING}/"
+          cp noseguy-images/*.png             "${STAGING}/noseguy-images/"
+          cp INSTALL.md                       "${STAGING}/"
+          chmod +x "${STAGING}/noseguy-wayland"
+          tar -czf "noseguy-${VERSION}-x86_64.tar.gz" "${STAGING}"
+
+      - name: Create Gitea release
+        id: create_release
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          GITEA_HOST=$(echo "$GITHUB_SERVER_URL" | sed 's|https\?://||; s|/$||')
+          RESPONSE=$(curl -sL -X POST \
+            -H "Authorization: token ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            "https://${GITEA_HOST}/api/v1/repos/${GITHUB_REPOSITORY}/releases" \
+            -d "{\"tag_name\":\"${VERSION}\",\"name\":\"${VERSION}\"}")
+          echo "API response: ${RESPONSE}"
+          RELEASE_ID=$(echo "${RESPONSE}" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release asset
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          GITEA_HOST=$(echo "$GITHUB_SERVER_URL" | sed 's|https\?://||; s|/$||')
+          ASSET="noseguy-${VERSION}-x86_64.tar.gz"
+          curl -sL -X POST \
+            -H "Authorization: token ${TOKEN}" \
+            -H "Content-Type: application/octet-stream" \
+            "https://${GITEA_HOST}/api/v1/repos/${GITHUB_REPOSITORY}/releases/${{ steps.create_release.outputs.release_id }}/assets?name=${ASSET}" \
+            --data-binary @"${ASSET}"
