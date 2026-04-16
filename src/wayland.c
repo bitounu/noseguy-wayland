@@ -95,12 +95,33 @@ static void render_and_commit(Output *out) {
 }
 
 static void frame_done(void *data, struct wl_callback *cb, uint32_t ms) {
-    (void)ms;
     Output *out = data;
     wl_callback_destroy(cb);
     if (!out->configured || !out->app->running) return;
 
-    anim_tick(&out->anim, 1.0 / out->app->fps);
+    /* Gate rendering at the configured FPS.  When it is not yet time to
+     * render, re-arm the frame callback via an empty commit (no new buffer,
+     * no Cairo work, no GPU draw) so the chain stays alive. */
+    uint32_t interval_ms = 1000u / (uint32_t)out->app->fps;
+    bool should_render = (out->last_frame_ms == 0) ||
+                         ((ms - out->last_frame_ms) >= interval_ms);
+
+    if (!should_render) {
+        struct wl_callback *next_cb = wl_surface_frame(out->surface);
+        wl_callback_add_listener(next_cb, &frame_listener, out);
+        wl_surface_commit(out->surface);
+        return;
+    }
+
+    /* Use the actual elapsed wall-clock time so animation speed is
+     * independent of whether the compositor fires callbacks at 30 Hz,
+     * 60 Hz, or any other rate. */
+    double dt = (out->last_frame_ms == 0)
+                ? (1.0 / out->app->fps)
+                : ((ms - out->last_frame_ms) / 1000.0);
+    out->last_frame_ms = ms;
+
+    anim_tick(&out->anim, dt);
 
     if (anim_wants_text(&out->anim)) {
         const char *t = text_get_next(out->app->text);

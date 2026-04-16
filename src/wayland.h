@@ -33,6 +33,7 @@ struct Output {
 
     AnimState                     anim;
     int                           frame_seq;
+    uint32_t                      last_frame_ms;  /* compositor ms of last rendered frame */
     Output                       *next;
 };
 

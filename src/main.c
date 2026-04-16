@@ -50,7 +50,7 @@ int main(int argc, char **argv) {
     const char *sprites_dir = NULL;
 
     App app = {
-        .fps       = 30,
+        .fps       = 12,
         .font_name = "Sans",
         .font_size = 18,
         .bg_r = 0.0, .bg_g = 0.0, .bg_b = 0.0,
