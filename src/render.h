@@ -3,6 +3,10 @@
 #include <cairo/cairo.h>
 #include "noseguy.h"
 
+/* Character height as a fraction of output height.  Shared with wayland.c
+ * so it can pre-scale sprites to exactly this size at configure time. */
+#define RENDER_CHAR_SCALE 0.13
+
 /* Draw one complete frame onto cr.
  *   width/height  : surface dimensions in pixels
  *   anim          : current animation state (read-only)

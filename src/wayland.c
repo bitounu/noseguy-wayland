@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <signal.h>
+#include <math.h>
 #include <linux/input-event-codes.h>
 
 static volatile bool *g_running = NULL;
@@ -63,6 +64,12 @@ static void output_free_buffers(Output *out) {
         if (out->data[i] && out->data[i] != MAP_FAILED)
             { munmap(out->data[i], sz); out->data[i] = NULL; }
     }
+    for (int i = 0; i < SPR_COUNT; i++) {
+        if (out->scaled_sprites[i]) {
+            cairo_surface_destroy(out->scaled_sprites[i]);
+            out->scaled_sprites[i] = NULL;
+        }
+    }
 }
 
 /* ── Frame callback ───────────────────────────────────────────────── */
@@ -76,11 +83,15 @@ static const struct wl_callback_listener frame_listener;
 static void render_and_commit(Output *out) {
     int idx = out->buf_idx ^ 1;
 
+    /* Use pre-scaled sprites if available; fall back to originals */
+    cairo_surface_t **use_sprites = out->scaled_sprites[0]
+        ? out->scaled_sprites : out->app->sprites;
+
     cairo_t *cr = cairo_create(out->cs[idx]);
     render_frame(cr, out->width, out->height, &out->anim,
                  out->app->font_name, out->app->font_size,
                  out->app->bg_r, out->app->bg_g, out->app->bg_b,
-                 &out->app->bubble, out->app->sprites);
+                 &out->app->bubble, (cairo_surface_t *const *)use_sprites);
     cairo_destroy(cr);
     cairo_surface_flush(out->cs[idx]);
 
@@ -94,41 +105,71 @@ static void render_and_commit(Output *out) {
     out->buf_idx = idx;
 }
 
+/* Re-arm the frame callback without rendering (empty commit).
+ * No new buffer is attached, so the compositor does not recomposite and
+ * the GPU stays idle.  The callback fires again at the next vblank so we
+ * can re-check timing and dirty state. */
+static void rearm_callback(Output *out) {
+    struct wl_callback *cb = wl_surface_frame(out->surface);
+    wl_callback_add_listener(cb, &frame_listener, out);
+    wl_surface_commit(out->surface);
+}
+
 static void frame_done(void *data, struct wl_callback *cb, uint32_t ms) {
     Output *out = data;
     wl_callback_destroy(cb);
     if (!out->configured || !out->app->running) return;
 
-    /* Gate rendering at the configured FPS.  When it is not yet time to
-     * render, re-arm the frame callback via an empty commit (no new buffer,
-     * no Cairo work, no GPU draw) so the chain stays alive. */
+    /* ── FPS gate ──────────────────────────────────────────────────── */
     uint32_t interval_ms = 1000u / (uint32_t)out->app->fps;
-    bool should_render = (out->last_frame_ms == 0) ||
-                         ((ms - out->last_frame_ms) >= interval_ms);
-
-    if (!should_render) {
-        struct wl_callback *next_cb = wl_surface_frame(out->surface);
-        wl_callback_add_listener(next_cb, &frame_listener, out);
-        wl_surface_commit(out->surface);
+    if (out->last_frame_ms != 0 &&
+        (ms - out->last_frame_ms) < interval_ms) {
+        rearm_callback(out);
         return;
     }
 
-    /* Use the actual elapsed wall-clock time so animation speed is
-     * independent of whether the compositor fires callbacks at 30 Hz,
-     * 60 Hz, or any other rate. */
+    /* Use actual elapsed time so animation speed is independent of the
+     * compositor's callback rate (30 Hz, 60 Hz, or anything else). */
     double dt = (out->last_frame_ms == 0)
                 ? (1.0 / out->app->fps)
                 : ((ms - out->last_frame_ms) / 1000.0);
     out->last_frame_ms = ms;
 
+    /* ── Dirty detection ───────────────────────────────────────────── *
+     * Snapshot every field that affects the rendered image.  If nothing
+     * changed after the tick we skip the Cairo render entirely — the GPU
+     * can stay fully idle between actual animation events.              */
+    double        prev_x     = out->anim.x;
+    double        prev_y     = out->anim.y;
+    int           prev_frame = out->anim.frame;
+    int           prev_blink = out->anim.blink_frame;
+    bool          prev_mouth = out->anim.mouth_open;
+    AnimStateKind prev_state = out->anim.state;
+    const char   *prev_text  = out->anim.current_text;
+
     anim_tick(&out->anim, dt);
 
+    bool text_changed = false;
     if (anim_wants_text(&out->anim)) {
         const char *t = text_get_next(out->app->text);
         anim_set_text(&out->anim, t ? strdup(t) : strdup("..."));
+        text_changed = true;
     }
 
-    render_and_commit(out);
+    bool dirty = text_changed
+        || fabs(out->anim.x - prev_x) > 0.5
+        || fabs(out->anim.y - prev_y) > 0.5
+        || out->anim.frame       != prev_frame
+        || out->anim.blink_frame != prev_blink
+        || out->anim.mouth_open  != prev_mouth
+        || out->anim.state       != prev_state
+        || out->anim.current_text != prev_text;
+
+    if (dirty) {
+        render_and_commit(out);
+    } else {
+        rearm_callback(out);
+    }
 }
 
 static const struct wl_callback_listener frame_listener = { frame_done };
@@ -150,6 +191,30 @@ static void layer_surface_configure(void *data,
         anim_init(&out->anim, out->width, out->height);
         int wpm = out->app->reading_wpm > 0 ? out->app->reading_wpm : 200;
         out->anim.reading_cps = wpm * 5.0 / 60.0;  /* avg 5 chars/word */
+
+        /* Pre-scale sprites to their render size (RENDER_CHAR_SCALE * height).
+         * This eliminates per-frame scaling; draw_sprite_char will detect the
+         * near-1.0 scale factor and use a direct blit instead. */
+        double char_h = (double)out->height * RENDER_CHAR_SCALE;
+        for (int i = 0; i < SPR_COUNT; i++) {
+            cairo_surface_t *src = out->app->sprites[i];
+            if (!src || cairo_surface_status(src) != CAIRO_STATUS_SUCCESS)
+                continue;
+            int src_h = cairo_image_surface_get_height(src);
+            int src_w = cairo_image_surface_get_width(src);
+            if (src_h == 0 || src_w == 0) continue;
+            double scale = char_h / (double)src_h;
+            int dst_w = (int)round(src_w * scale);
+            int dst_h = (int)round(src_h * scale);
+            cairo_surface_t *dst =
+                cairo_image_surface_create(CAIRO_FORMAT_ARGB32, dst_w, dst_h);
+            cairo_t *scr = cairo_create(dst);
+            cairo_scale(scr, scale, scale);
+            cairo_set_source_surface(scr, src, 0, 0);
+            cairo_paint(scr);
+            cairo_destroy(scr);
+            out->scaled_sprites[i] = dst;
+        }
     }
     if (!out->configured) {
         out->configured = true;

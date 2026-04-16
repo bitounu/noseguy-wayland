@@ -6,7 +6,7 @@
 /* Character height = output_height * CHAR_SCALE.
  * All sub-functions receive `u` = CHAR_SCALE * height / 10.0
  * so that 1 character unit ≈ one tenth of the character height. */
-#define CHAR_SCALE 0.13
+#define CHAR_SCALE RENDER_CHAR_SCALE
 
 /* ── Vector character (fallback when no sprites supplied) ─────────── */
 
@@ -182,9 +182,14 @@ static void draw_sprite_char(cairo_t *cr, double cx, double cy,
     double dy = cy - sh * scale;   /* feet at cy */
 
     cairo_save(cr);
-    cairo_translate(cr, dx, dy);
-    cairo_scale(cr, scale, scale);
-    cairo_set_source_surface(cr, spr, 0, 0);
+    if (fabs(scale - 1.0) < 0.02) {
+        /* Pre-scaled sprite: direct blit without matrix change */
+        cairo_set_source_surface(cr, spr, dx, dy);
+    } else {
+        cairo_translate(cr, dx, dy);
+        cairo_scale(cr, scale, scale);
+        cairo_set_source_surface(cr, spr, 0, 0);
+    }
     cairo_paint(cr);
     cairo_restore(cr);
 }
